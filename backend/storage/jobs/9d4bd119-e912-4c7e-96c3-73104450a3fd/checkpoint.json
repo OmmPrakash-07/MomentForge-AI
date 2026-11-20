@@ -1,0 +1,21 @@
+{
+    "video_id": "9d4bd119-e912-4c7e-96c3-73104450a3fd",
+    "duration_seconds": 5.0,
+    "chunk_duration_seconds": 600,
+    "completed_chunks": [
+        0
+    ],
+    "scenes": [
+        {
+            "start_seconds": 0.0,
+            "end_seconds": 5.0,
+            "duration_seconds": 5.0,
+            "scene_number": 1,
+            "chunk_number": 0
+        }
+    ],
+    "status": "completed",
+    "total_chunks": 1,
+    "total_scenes": 1,
+    "progress_percent": 100
+}

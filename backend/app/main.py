@@ -10,12 +10,20 @@ from pathlib import Path
 
 import httpx
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import (
+    FastAPI,
+    UploadFile,
+    File,
+    HTTPException,
+    BackgroundTasks,
+)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from scenedetect import open_video, SceneManager
 from scenedetect.detectors import ContentDetector
+
+from app.services.chunk_processor import process_video_chunks
 
 
 # ==========================================
@@ -49,10 +57,12 @@ app.add_middleware(
 UPLOAD_DIR = Path("storage/uploads")
 THUMBNAIL_DIR = Path("storage/thumbnails")
 ANALYSIS_DIR = Path("storage/analysis")
+JOBS_DIR = Path("storage/jobs")
 
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 THUMBNAIL_DIR.mkdir(parents=True, exist_ok=True)
 ANALYSIS_DIR.mkdir(parents=True, exist_ok=True)
+JOBS_DIR.mkdir(parents=True, exist_ok=True)
 
 ALLOWED_EXTENSIONS = {
     ".mp4",
@@ -62,7 +72,7 @@ ALLOWED_EXTENSIONS = {
     ".webm"
 }
 
-CHUNK_SIZE = 1024 * 1024  # 1 MB
+CHUNK_SIZE = 1024 * 1024
 
 
 # ==========================================
@@ -447,7 +457,7 @@ def detect_video_scenes(video_path: Path):
         show_progress=False
     )
 
-    scene_list = scene_manager.get_scene_list(start_in_scene=True)
+    scene_list = scene_manager.get_scene_list()
 
     scenes = []
 
@@ -523,3 +533,146 @@ async def analyze_video_scenes(video_id: str):
             status_code=500,
             detail=f"Scene detection failed: {str(error)}"
         )
+
+
+# ==========================================
+# BACKGROUND VIDEO CHUNK PROCESSING
+# ==========================================
+
+@app.post("/api/videos/{video_id}/process-chunks")
+async def process_video_in_chunks(
+    video_id: str,
+    background_tasks: BackgroundTasks
+):
+
+    try:
+        safe_id = str(UUID(video_id))
+
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid video ID"
+        )
+
+    matches = list(UPLOAD_DIR.glob(f"{safe_id}.*"))
+
+    if not matches:
+        raise HTTPException(
+            status_code=404,
+            detail="Video not found"
+        )
+
+    job_dir = JOBS_DIR / safe_id
+    job_dir.mkdir(parents=True, exist_ok=True)
+
+    checkpoint_path = job_dir / "checkpoint.json"
+
+    if checkpoint_path.exists():
+
+        try:
+            checkpoint = json.loads(
+                checkpoint_path.read_text(encoding="utf-8")
+            )
+
+        except (json.JSONDecodeError, OSError):
+            raise HTTPException(
+                status_code=500,
+                detail="Processing checkpoint is corrupted or unreadable"
+            )
+
+        if checkpoint.get("status") == "processing":
+            raise HTTPException(
+                status_code=409,
+                detail="This video is already processing"
+            )
+
+        if checkpoint.get("status") == "completed":
+            return {
+                "video_id": safe_id,
+                "status": "completed",
+                "message": "Video has already been processed"
+            }
+
+    else:
+        checkpoint = {
+            "video_id": safe_id,
+            "completed_chunks": [],
+            "scenes": [],
+            "progress_percent": 0,
+            "status": "queued"
+        }
+
+    checkpoint["status"] = "processing"
+
+    checkpoint_path.write_text(
+        json.dumps(checkpoint, indent=4),
+        encoding="utf-8"
+    )
+
+    background_tasks.add_task(
+        process_video_chunks,
+        safe_id,
+        matches[0]
+    )
+
+    return {
+        "video_id": safe_id,
+        "status": "processing",
+        "message": "Video processing started in background"
+    }
+
+
+# ==========================================
+# VIDEO PROCESSING STATUS
+# ==========================================
+
+@app.get("/api/videos/{video_id}/processing-status")
+async def get_processing_status(video_id: str):
+
+    try:
+        safe_id = str(UUID(video_id))
+
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid video ID"
+        )
+
+    checkpoint_path = (
+        JOBS_DIR / safe_id / "checkpoint.json"
+    )
+
+    if not checkpoint_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail="Processing job not found"
+        )
+
+    try:
+        checkpoint = json.loads(
+            checkpoint_path.read_text(encoding="utf-8")
+        )
+
+    except (json.JSONDecodeError, OSError):
+        raise HTTPException(
+            status_code=500,
+            detail="Processing checkpoint is corrupted or unreadable"
+        )
+
+    completed_chunks = checkpoint.get("completed_chunks", [])
+    total_chunks = checkpoint.get("total_chunks", 0)
+
+    progress = (
+        round(len(completed_chunks) / total_chunks * 100, 2)
+        if total_chunks > 0
+        else checkpoint.get("progress_percent", 0)
+    )
+
+    return {
+        "video_id": safe_id,
+        "status": checkpoint.get("status", "unknown"),
+        "completed_chunks": len(completed_chunks),
+        "total_chunks": total_chunks,
+        "progress_percent": progress,
+        "total_scenes": len(checkpoint.get("scenes", []))
+    }
