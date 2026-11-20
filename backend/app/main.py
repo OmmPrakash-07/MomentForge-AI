@@ -14,6 +14,9 @@ from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
+from scenedetect import open_video, SceneManager
+from scenedetect.detectors import ContentDetector
+
 
 # ==========================================
 # APPLICATION CONFIGURATION
@@ -32,10 +35,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=["http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -48,9 +48,11 @@ app.add_middleware(
 
 UPLOAD_DIR = Path("storage/uploads")
 THUMBNAIL_DIR = Path("storage/thumbnails")
+ANALYSIS_DIR = Path("storage/analysis")
 
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 THUMBNAIL_DIR.mkdir(parents=True, exist_ok=True)
+ANALYSIS_DIR.mkdir(parents=True, exist_ok=True)
 
 ALLOWED_EXTENSIONS = {
     ".mp4",
@@ -257,7 +259,6 @@ async def get_video_metadata(video_id: str):
         return {
             "video_id": safe_id,
             "filename": video_path.name,
-
             "duration_seconds": round(duration, 2),
 
             "duration_formatted": (
@@ -273,11 +274,9 @@ async def get_video_metadata(video_id: str):
 
             "video_codec": video_stream.get("codec_name"),
             "audio_codec": audio_stream.get("codec_name"),
-
             "fps": video_stream.get("avg_frame_rate"),
             "bitrate": format_data.get("bit_rate"),
             "size_bytes": int(format_data.get("size", 0)),
-
             "status": "metadata_extracted"
         }
 
@@ -424,3 +423,103 @@ async def get_thumbnail(video_id: str):
         media_type="image/jpeg",
         filename=f"{safe_id}.jpg"
     )
+
+
+# ==========================================
+# VIDEO SCENE DETECTION
+# ==========================================
+
+def detect_video_scenes(video_path: Path):
+
+    video = open_video(str(video_path))
+
+    scene_manager = SceneManager()
+
+    scene_manager.add_detector(
+        ContentDetector(
+            threshold=27.0,
+            min_scene_len=15
+        )
+    )
+
+    scene_manager.detect_scenes(
+        video=video,
+        show_progress=False
+    )
+
+    scene_list = scene_manager.get_scene_list(start_in_scene=True)
+
+    scenes = []
+
+    for index, (start_time, end_time) in enumerate(
+        scene_list,
+        start=1
+    ):
+
+        start_seconds = start_time.get_seconds()
+        end_seconds = end_time.get_seconds()
+
+        scenes.append({
+            "scene_number": index,
+            "start_seconds": round(start_seconds, 3),
+            "end_seconds": round(end_seconds, 3),
+            "duration_seconds": round(
+                end_seconds - start_seconds,
+                3
+            )
+        })
+
+    return scenes
+
+
+# ==========================================
+# ANALYZE VIDEO SCENES API
+# ==========================================
+
+@app.post("/api/videos/{video_id}/scenes")
+async def analyze_video_scenes(video_id: str):
+
+    try:
+        safe_id = str(UUID(video_id))
+
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid video ID"
+        )
+
+    matches = list(UPLOAD_DIR.glob(f"{safe_id}.*"))
+
+    if not matches:
+        raise HTTPException(
+            status_code=404,
+            detail="Video not found"
+        )
+
+    video_path = matches[0]
+
+    try:
+        scenes = await asyncio.to_thread(
+            detect_video_scenes,
+            video_path
+        )
+
+        result = {
+            "video_id": safe_id,
+            "total_scenes": len(scenes),
+            "scenes": scenes,
+            "status": "scene_detection_completed"
+        }
+
+        result_path = ANALYSIS_DIR / f"{safe_id}_scenes.json"
+
+        with open(result_path, "w", encoding="utf-8") as file:
+            json.dump(result, file, indent=4)
+
+        return result
+
+    except Exception as error:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Scene detection failed: {str(error)}"
+        )
