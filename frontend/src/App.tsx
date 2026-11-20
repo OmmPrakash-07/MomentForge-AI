@@ -1,6 +1,14 @@
 
 import { useRef, useState } from "react";
 import "./App.css";
+import {
+  uploadVideo,
+  getVideoMetadata,
+  generateThumbnail,
+  getThumbnailUrl,
+  type VideoUploadResponse,
+  type VideoMetadata,
+} from "./services/videoService";
 
 type InputMode = "youtube" | "upload";
 
@@ -9,33 +17,95 @@ function App() {
   const [youtubeUrl, setYoutubeUrl] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [clipDuration, setClipDuration] = useState("30");
+
+  const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadResult, setUploadResult] =
+    useState<VideoUploadResponse | null>(null);
+  const [metadata, setMetadata] = useState<VideoMetadata | null>(null);
+  const [thumbnailUrl, setThumbnailUrl] = useState("");
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFile = (file?: File) => {
     if (!file) return;
 
-    const allowed = ["video/mp4", "video/x-matroska", "video/quicktime"];
+    const allowedExtensions = [".mp4", ".mkv", ".mov", ".avi", ".webm"];
+    const extension = file.name
+      .slice(file.name.lastIndexOf("."))
+      .toLowerCase();
 
-    if (!allowed.includes(file.type)) {
-      alert("Please select an MP4, MKV or MOV video.");
+    if (!allowedExtensions.includes(extension)) {
+      setError("Please select MP4, MKV, MOV, AVI or WEBM video.");
       return;
     }
 
     setSelectedFile(file);
+    setUploadResult(null);
+    setMetadata(null);
+    setThumbnailUrl("");
+    setUploadProgress(0);
+    setError("");
+    setSuccess("");
   };
 
-  const handleStart = () => {
-    if (mode === "youtube" && !youtubeUrl.trim()) {
-      alert("Please enter a YouTube URL.");
+  const handleStart = async () => {
+    setError("");
+    setSuccess("");
+
+    if (mode === "youtube") {
+      if (!youtubeUrl.trim()) {
+        setError("Please enter a YouTube URL.");
+        return;
+      }
+
+      setError("YouTube URL processing will be added in a later milestone.");
       return;
     }
 
-    if (mode === "upload" && !selectedFile) {
-      alert("Please select a video first.");
+    if (!selectedFile) {
+      setError("Please select a video first.");
       return;
     }
 
-    alert("Dashboard is ready! Backend processing will be connected next.");
+    try {
+      setIsUploading(true);
+      setUploadProgress(0);
+      setUploadResult(null);
+      setMetadata(null);
+      setThumbnailUrl("");
+
+      // 1. Upload video to FastAPI backend
+      const uploaded = await uploadVideo(
+        selectedFile,
+        (progress) => setUploadProgress(progress)
+      );
+
+      setUploadResult(uploaded);
+      setUploadProgress(100);
+
+      // 2. Extract metadata and generate thumbnail
+      const [metadataResult, thumbnailResult] = await Promise.all([
+        getVideoMetadata(uploaded.video_id),
+        generateThumbnail(uploaded.video_id),
+      ]);
+
+      setMetadata(metadataResult);
+      setThumbnailUrl(getThumbnailUrl(thumbnailResult.thumbnail));
+      setSuccess("Video uploaded and analyzed successfully!");
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Something went wrong."
+      );
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const formatFileSize = (bytes: number) => {
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
   };
 
   return (
@@ -115,12 +185,14 @@ function App() {
               <button
                 className={mode === "youtube" ? "tab active-tab" : "tab"}
                 onClick={() => setMode("youtube")}
+                disabled={isUploading}
               >
                 ▶ &nbsp; YouTube URL
               </button>
               <button
                 className={mode === "upload" ? "tab active-tab" : "tab"}
                 onClick={() => setMode("upload")}
+                disabled={isUploading}
               >
                 ↑ &nbsp; Local Upload
               </button>
@@ -148,7 +220,7 @@ function App() {
                 <label>Upload your video</label>
                 <div
                   className="dropzone"
-                  onClick={() => fileInputRef.current?.click()}
+                  onClick={() => !isUploading && fileInputRef.current?.click()}
                 >
                   <div className="upload-icon">↑</div>
                   <h3>
@@ -157,22 +229,40 @@ function App() {
                       : "Drop your video here"}
                   </h3>
                   <p>Or click to browse files from your computer</p>
-                  <span>MP4 · MKV · MOV</span>
+                  <span>MP4 · MKV · MOV · AVI · WEBM</span>
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept=".mp4,.mkv,.mov,video/mp4,video/x-matroska,video/quicktime"
+                    accept=".mp4,.mkv,.mov,.avi,.webm"
                     hidden
+                    disabled={isUploading}
                     onChange={(e) => handleFile(e.target.files?.[0])}
                   />
                 </div>
+
                 {selectedFile && (
-                  <button
-                    className="remove-file"
-                    onClick={() => setSelectedFile(null)}
-                  >
-                    Remove selected video
-                  </button>
+                  <div className="selected-file">
+                    <span>{selectedFile.name}</span>
+                    <span>{formatFileSize(selectedFile.size)}</span>
+                    {!isUploading && (
+                      <button
+                        className="remove-file"
+                        onClick={() => {
+                          setSelectedFile(null);
+                          setUploadResult(null);
+                          setMetadata(null);
+                          setThumbnailUrl("");
+                          setError("");
+                          setSuccess("");
+                          if (fileInputRef.current) {
+                            fileInputRef.current.value = "";
+                          }
+                        }}
+                      >
+                        Remove
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             )}
@@ -208,13 +298,96 @@ function App() {
               </div>
             </div>
 
-            <button className="start-button" onClick={handleStart}>
-              ✦ &nbsp; Start AI Clipping &nbsp; →
+            {isUploading && (
+              <div className="upload-progress">
+                <div className="progress-label">
+                  <span>Uploading video...</span>
+                  <strong>{uploadProgress}%</strong>
+                </div>
+                <div className="progress-track">
+                  <div
+                    className="progress-fill"
+                    style={{ width: `${uploadProgress}%` }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {error && <div className="status-message error-message">{error}</div>}
+            {success && (
+              <div className="status-message success-message">{success}</div>
+            )}
+
+            <button
+              className="start-button"
+              onClick={handleStart}
+              disabled={isUploading}
+            >
+              {isUploading
+                ? "Processing video..."
+                : "✦  Start AI Clipping  →"}
             </button>
+
             <p className="privacy-note">
               Your local video files stay on your computer.
             </p>
           </div>
+
+          {uploadResult && (
+            <div className="result-card">
+              <div className="result-heading">
+                <div>
+                  <span className="eyebrow">UPLOAD COMPLETE</span>
+                  <h2>Video analysis</h2>
+                </div>
+                <span className="result-status">✓ Uploaded</span>
+              </div>
+
+              {thumbnailUrl && (
+                <img
+                  className="video-thumbnail"
+                  src={thumbnailUrl}
+                  alt="Uploaded video thumbnail"
+                />
+              )}
+
+              <h3>{uploadResult.filename}</h3>
+              <p className="helper">
+                Video ID: {uploadResult.video_id}
+              </p>
+
+              {metadata && (
+                <div className="metadata-grid">
+                  <div className="metadata-item">
+                    <span>Duration</span>
+                    <strong>{metadata.duration_formatted}</strong>
+                  </div>
+                  <div className="metadata-item">
+                    <span>Resolution</span>
+                    <strong>
+                      {metadata.resolution.width} × {metadata.resolution.height}
+                    </strong>
+                  </div>
+                  <div className="metadata-item">
+                    <span>Frame rate</span>
+                    <strong>{metadata.fps} FPS</strong>
+                  </div>
+                  <div className="metadata-item">
+                    <span>Video codec</span>
+                    <strong>{metadata.video_codec.toUpperCase()}</strong>
+                  </div>
+                  <div className="metadata-item">
+                    <span>Audio codec</span>
+                    <strong>{metadata.audio_codec ?? "No audio stream"}</strong>
+                  </div>
+                  <div className="metadata-item">
+                    <span>File size</span>
+                    <strong>{formatFileSize(metadata.size_bytes)}</strong>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
 
           <div className="bottom-grid">
             <div className="info-card">

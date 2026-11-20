@@ -471,3 +471,154 @@ footer span {
     display: none;
   }
 }
+
+
+.start-button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.selected-file {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  color: #cbd5e1;
+  font-size: 13px;
+}
+
+.remove-file {
+  background: transparent;
+  border: none;
+  color: #f87171;
+  cursor: pointer;
+}
+
+.upload-progress {
+  margin: 22px 0;
+}
+
+.progress-label {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: #cbd5e1;
+}
+
+.progress-track {
+  height: 8px;
+  background: #25283a;
+  border-radius: 20px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #8056e8, #b17aff);
+  border-radius: 20px;
+  transition: width 0.2s ease;
+}
+
+.status-message {
+  margin: 16px 0;
+  padding: 12px 14px;
+  border-radius: 9px;
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.error-message {
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+}
+
+.success-message {
+  color: #86efac;
+  background: rgba(34, 197, 94, 0.1);
+  border: 1px solid rgba(34, 197, 94, 0.25);
+}
+
+.result-card {
+  margin-top: 24px;
+  padding: 24px;
+  background: #171927;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 14px;
+}
+
+.result-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.result-heading h2 {
+  margin: 6px 0 0;
+}
+
+.result-status {
+  color: #86efac;
+  font-size: 13px;
+}
+
+.video-thumbnail {
+  display: block;
+  width: 100%;
+  max-width: 520px;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border-radius: 10px;
+  margin-bottom: 18px;
+  background: #25283a;
+}
+
+.result-card h3 {
+  overflow-wrap: anywhere;
+}
+
+.metadata-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.metadata-item {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.035);
+  border-radius: 9px;
+  min-width: 0;
+}
+
+.metadata-item span {
+  color: #9298ad;
+  font-size: 12px;
+}
+
+.metadata-item strong {
+  color: #e5e7eb;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 650px) {
+  .metadata-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .result-card {
+    padding: 16px;
+  }
+}
